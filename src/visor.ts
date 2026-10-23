@@ -104,6 +104,11 @@ export function crearVisor(contenedor: HTMLElement): Visor {
     // delante (−Z), un poco por debajo de la vista. En el espacio «local» el origen es el usuario.
     const posicionPrevia = grupo.position.clone();
     const escalaPrevia = grupo.scale.clone();
+    // Durante la sesión, Three.js copia la pose del dispositivo XR en `camara`: sin guardarla, al salir
+    // la cámara del visor queda donde estaba el teléfono, mirando a otro lado, y el visor se ve vacío.
+    const camaraPosicionPrevia = camara.position.clone();
+    const camaraOrientacionPrevia = camara.quaternion.clone();
+    const camaraFovPrevio = camara.fov;
     grupo.position.set(0, -0.2, -1.5);
     grupo.scale.setScalar(0.25);
 
@@ -123,7 +128,11 @@ export function crearVisor(contenedor: HTMLElement): Visor {
         grupo.position.copy(posicionPrevia);
         grupo.scale.copy(escalaPrevia);
         grupo.rotation.set(0, 0, 0);
-        ajustarTamano(); // la sesión XR cambió el tamaño del canvas
+        camara.position.copy(camaraPosicionPrevia);
+        camara.quaternion.copy(camaraOrientacionPrevia);
+        camara.fov = camaraFovPrevio;
+        controles.update();
+        ajustarTamano(); // la sesión XR cambió el tamaño del canvas (y la proyección de la cámara)
         bucle(); // vuelve el requestAnimationFrame normal
         alTerminar();
       },
