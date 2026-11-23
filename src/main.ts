@@ -9,16 +9,22 @@ import { registerSW } from "virtual:pwa-register";
 import { PATRONES } from "./catalogo";
 import { iniciarProgreso } from "./progreso-ui";
 import { abrirBaseDeDatos, encolarDescargas, obtenerDescargas } from "./db";
-import { crearVisor } from "./visor";
+import { crearVisor, type EstadoAR } from "./visor";
 import { pedirPermisoOrientacion, hayOrientacionReal, iniciarControlOrientacion } from "./sensores";
 import type { ControlOrientacion } from "./sensores";
 import { iniciarCamaraDeFondo, detenerCamaraDeFondo, describirErrorCamara } from "./camara";
 import { estadoAvisos, pedirPermisoAvisos, mostrarAviso } from "./avisos";
-import { ETIQUETA_SYNC, FICHAS_DESCARGABLES, descargarPendientes } from "./descargas";
+import { ETIQUETA_SYNC, FICHAS_DESCARGABLES, descargarPendientes, leerFicha } from "./descargas";
+import { CATALOGO, modeloPorId } from "./modelos";
+import { ROLES, type Ficha } from "./modelos/tipos";
+import { describirRastro, leerRastro, PASO_FINAL } from "./rastro";
+import { estadoInstalacion, iniciarInstalacion, instalacionRechazada, pedirInstalacion } from "./instalar";
+import { iniciarConexion } from "./conexion";
 import { diagnosticarAR, mensajeSoporteAR, pedirSesionAR, describirErrorAR } from "./xr";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
+  <p id="estado-conexion" class="estado-conexion" role="status" hidden></p>
   <header class="nav-bar">
     <div class="nav-brand">
       <span class="nav-dot" aria-hidden="true"></span>
@@ -27,10 +33,11 @@ app.innerHTML = `
     <span id="estado-sw" class="sw-badge">Service Worker: comprobando…</span>
   </header>
 
+  <main class="contenido">
   <section class="hero">
-    <p class="hero-eyebrow">Módulo AR · Sub-bloque B · Sesión 38</p>
+    <p class="hero-eyebrow">Módulo AR · Versión final</p>
     <h1>Atlas 3D de Arquitectura de Software</h1>
-    <p>Catálogo interactivo en 3D de patrones y arquitecturas de software, con soporte de realidad aumentada. El proyecto se construye desde cero, sesión a sesión.</p>
+    <p>Ocho patrones de arquitectura de software dibujados en 3D con Three.js: míralos, toca una pieza para leer qué hace y apóyalos sobre tu mesa con realidad aumentada. Se instala y funciona sin conexión.</p>
   </section>
 
   <section class="visor-zona" aria-label="Visor 3D">
@@ -41,34 +48,44 @@ app.innerHTML = `
       <button type="button" id="btn-ar" class="btn-visor destacado" disabled>🥽 Ver en AR</button>
     </div>
     <p id="aviso-visor" class="aviso-visor" role="status" hidden></p>
-    <div class="escena-contenedor" id="escena">
+    <div id="visor" class="escena-contenedor">
       <video id="fondo-camara" class="fondo-camara" playsinline muted hidden></video>
     </div>
     <span id="lectura-visor" class="lectura-visor"></span>
+    <section class="modelo-panel" aria-label="Modelo de arquitectura">
+      <div class="modelo-tabs" id="tabs-modelo" role="group" aria-label="Elegir modelo"></div>
+      <p id="modelo-resumen" class="modelo-resumen"></p>
+      <div id="leyenda" class="leyenda" aria-label="Leyenda de colores"></div>
+      <div id="chips-piezas" class="chips-piezas" role="group" aria-label="Piezas del modelo"></div>
+      <div id="pieza-detalle" class="pieza-detalle" aria-live="polite"></div>
+    </section>
     <p id="estado-ar" class="estado-ar" role="status">Comprobando realidad aumentada…</p>
     <details class="diag-ar">
       <summary>Diagnóstico de realidad aumentada</summary>
       <pre id="diag-ar" class="diag-ar-texto"></pre>
       <button type="button" id="btn-recomprobar" class="btn-nota secundario">Comprobar de nuevo</button>
     </details>
-    <p class="aviso-demo">Visor de prueba: un cubo, no un modelo real. Con la cámara de fondo NO es realidad aumentada: el cubo solo se dibuja encima del video. «Ver en AR» abre una sesión WebXR real, pero el cubo aún no se apoya en ninguna superficie.</p>
+    <p class="aviso-demo">Toca una pieza para ver qué hace; arrastra para girar la vista. Con la cámara de fondo NO es realidad aumentada: el modelo solo se dibuja encima del video. «Ver en AR» abre una sesión WebXR real: el anillo verde busca una superficie, tocas para apoyar el modelo, y lo mueves, giras y escalas con los dedos; con ◀ ▶ recorres sus piezas. Los modelos son esquemas didácticos, no réplicas realistas.</p>
   </section>
 
   <section class="catalogo">
     <h2>Los 8 patrones del catálogo</h2>
     <div class="catalogo-grid">
-      ${PATRONES.map(
-        (patron, i) => `
+      ${PATRONES.map((patron, i) => {
+        const m = modeloPorId(patron.id);
+        return `
         <article class="patron-card" data-id="${patron.id}">
           <div class="patron-top">
             <span class="numero">0${i + 1}</span>
             <button type="button" class="btn-fav" aria-pressed="false" aria-label="Marcar ${patron.nombre} como favorito">☆</button>
           </div>
           <button type="button" class="patron-abrir">${patron.nombre}</button>
-          <span class="estado">Modelo 3D · Próximamente</span>
+          <span class="resumen-card">${m?.resumen ?? ""}</span>
+          <span class="estado">Modelo 3D disponible</span>
           <span class="visita">Sin visitar</span>
-        </article>`
-      ).join("")}
+          <button type="button" class="btn-ver3d" data-id="${patron.id}">🧊 Ver en 3D</button>
+        </article>`;
+      }).join("")}
     </div>
   </section>
 
@@ -101,6 +118,14 @@ app.innerHTML = `
     </div>
   </section>
 
+  <section class="instalar-zona descargas-zona" aria-labelledby="titulo-instalar">
+    <h2 id="titulo-instalar">Instalar la app</h2>
+    <div class="descargas-barra">
+      <button type="button" id="btn-instalar" class="btn-nota" hidden>⬇ Instalar Atlas 3D</button>
+      <span id="estado-instalacion" class="estado-linea" role="status"></span>
+    </div>
+  </section>
+
   <section class="descargas-zona" aria-labelledby="titulo-descargas">
     <h2 id="titulo-descargas">Uso sin conexión</h2>
     <div class="descargas-barra">
@@ -111,14 +136,21 @@ app.innerHTML = `
     <progress id="progreso-descarga" max="${FICHAS_DESCARGABLES.length}" value="0" hidden></progress>
     <p id="estado-descarga" class="estado-linea" role="status"></p>
   </section>
+  </main>
 
   <div id="xr-overlay" class="xr-overlay">
     <p id="xr-estado">Sesión de realidad aumentada activa</p>
+    <p id="xr-datos" class="xr-datos"></p>
+    <div class="xr-piezas">
+      <button type="button" id="btn-pieza-ant" aria-label="Pieza anterior">◀</button>
+      <p id="xr-pieza" class="xr-pieza"></p>
+      <button type="button" id="btn-pieza-sig" aria-label="Pieza siguiente">▶</button>
+    </div>
     <button type="button" id="btn-salir-ar">Salir de AR</button>
   </div>
 
   <footer class="pie">
-    <p>Vite + TypeScript + Three.js + Workbox + WebXR · Instalable como aplicación</p>
+    <p>Vite + TypeScript + Three.js + Workbox + WebXR · Instalable · Funciona sin conexión</p>
   </footer>
 `;
 
@@ -130,7 +162,91 @@ function porId<T extends HTMLElement>(id: string): T {
 }
 
 // --- Sesión 35: visor 3D controlado por sensores de orientación ---
-const visor = crearVisor(porId("escena"));
+const visor = crearVisor(porId("visor"));
+
+// --- Sesión 40: panel del modelo y de la pieza elegida ---
+const tabsModelo = porId("tabs-modelo");
+const resumenModelo = porId("modelo-resumen");
+const leyendaEl = porId("leyenda");
+const chipsPiezas = porId("chips-piezas");
+const detallePieza = porId("pieza-detalle");
+let modeloActualId: string | null = null;
+let piezaActual: string | null = null;
+let fichaActual: Ficha | null = null;
+
+function elegirModelo(id: string): void {
+  const def = modeloPorId(id);
+  if (!def) return;
+  modeloActualId = id;
+  piezaActual = null;
+  fichaActual = null;
+  visor.mostrarModelo(def);
+  tabsModelo.innerHTML = CATALOGO.map((m) => `<button type="button" class="tab" data-id="${m.id}" aria-pressed="${m.id === id}">${m.nombre}</button>`).join("");
+  tabsModelo.querySelectorAll<HTMLButtonElement>(".tab").forEach((b) => b.addEventListener("click", () => elegirModelo(b.dataset.id!)));
+  resumenModelo.textContent = def.resumen;
+  const roles = [...new Set(def.piezas.map((p) => p.rol))];
+  leyendaEl.innerHTML = roles.map((r) => `<span class="leyenda-item"><i style="background:${ROLES[r].css}"></i>${ROLES[r].nombre}</span>`).join("");
+  chipsPiezas.innerHTML = def.piezas.map((p) => `<button type="button" class="chip-pieza" data-id="${p.id}" aria-pressed="false"><i style="background:${ROLES[p.rol].css}"></i>${p.nombre}</button>`).join("");
+  chipsPiezas.querySelectorAll<HTMLButtonElement>(".chip-pieza").forEach((b) =>
+    b.addEventListener("click", () => {
+      const nueva = piezaActual === b.dataset.id ? null : b.dataset.id!;
+      visor.seleccionar(nueva);
+      sincronizarPieza(nueva);
+    }),
+  );
+  pintarDetalle();
+  pintarPiezaAR();
+  // La ficha ampliada llega de la caché (sin conexión) o de la red; si no hay ninguna, se usa solo el código.
+  void leerFicha(id).then((f) => {
+    if (modeloActualId !== id) return;
+    fichaActual = f;
+    pintarDetalle();
+    pintarPiezaAR();
+  });
+}
+
+/** Refleja en la interfaz la pieza que ya resaltó el visor. */
+function sincronizarPieza(id: string | null): void {
+  piezaActual = id;
+  chipsPiezas.querySelectorAll<HTMLButtonElement>(".chip-pieza").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === id)));
+  pintarDetalle();
+  pintarPiezaAR();
+}
+
+function nombresDe(def: NonNullable<ReturnType<typeof modeloPorId>>, ids: string[]): string {
+  return ids.map((x) => def.piezas.find((p) => p.id === x)?.nombre ?? x).join(", ");
+}
+
+function pintarDetalle(): void {
+  const def = modeloPorId(modeloActualId ?? "");
+  if (!def) return;
+  const pieza = def.piezas.find((p) => p.id === piezaActual);
+  const extra = pieza ? fichaActual?.piezas[pieza.id] : null;
+  const sinFicha = fichaActual ? "" : '<p class="nota-ficha">Detalle ampliado no disponible: descarga las fichas (abajo) para leerlo sin conexión.</p>';
+  if (pieza) {
+    detallePieza.innerHTML =
+      `<h3><i style="background:${ROLES[pieza.rol].css}"></i>${pieza.nombre} <small>${ROLES[pieza.rol].nombre}</small></h3>` +
+      `<p>${pieza.resumen}</p>` +
+      (extra ? `<p><b>Responsabilidad.</b> ${extra.responsabilidad}</p><p><b>Habla con:</b> ${nombresDe(def, extra.habla_con)}.</p>` : sinFicha);
+  } else {
+    detallePieza.innerHTML =
+      "<p>Toca una pieza del modelo, o elígela en la lista, para ver qué hace. Toca la misma pieza otra vez para soltarla.</p>" +
+      (fichaActual ? `<p><b>Cuándo usarlo.</b> ${fichaActual.cuando_usarlo}</p><p><b>Riesgo.</b> ${fichaActual.riesgo}</p>` : sinFicha);
+  }
+}
+
+visor.alTocarPieza((id) => sincronizarPieza(id));
+
+// Las tarjetas del catálogo: «Ver en 3D» lleva al visor; abrir una tarjeta también muestra su modelo.
+document.querySelectorAll<HTMLButtonElement>(".btn-ver3d").forEach((b) =>
+  b.addEventListener("click", () => {
+    elegirModelo(b.dataset.id!);
+    porId("visor").scrollIntoView({ block: "center", behavior: "smooth" });
+  }),
+);
+document.querySelectorAll<HTMLElement>(".patron-card").forEach((t) =>
+  t.querySelector(".patron-abrir")!.addEventListener("click", () => elegirModelo(t.dataset.id!)),
+);
 const btnOrientacion = porId<HTMLButtonElement>("btn-orientacion");
 const btnCalibrar = porId<HTMLButtonElement>("btn-calibrar");
 const lecturaVisor = porId("lectura-visor");
@@ -271,7 +387,7 @@ async function refrescarDescargados() {
     tarjeta.classList.toggle("sin-conexion", disponible);
     tarjeta.querySelector(".estado")!.textContent = disponible
       ? "✓ Ficha disponible sin conexión"
-      : FICHAS_DESCARGABLES.includes(id) ? "Ficha descargable · Modelo 3D próximamente" : "Modelo 3D · Próximamente";
+      : "Modelo 3D disponible · ficha descargable";
   });
 }
 void refrescarDescargados();
@@ -326,35 +442,115 @@ window.addEventListener("appinstalled", () => {
   void mostrarAviso("Atlas 3D instalado", "Ya puedes abrirlo desde tu pantalla de inicio.", import.meta.env.BASE_URL, "atlas-instalado");
 });
 
-// --- Sesión 38: realidad aumentada con WebXR ---
+// --- Sesiones 38-40: realidad aumentada con WebXR (hit-test, anclas, gestos, piezas) ---
 const btnAR = porId<HTMLButtonElement>("btn-ar");
 const estadoAR = porId("estado-ar");
 const overlayAR = porId("xr-overlay");
 const btnSalirAR = porId<HTMLButtonElement>("btn-salir-ar");
+const xrEstado = porId("xr-estado");
+const xrDatos = porId("xr-datos");
+const xrPieza = porId("xr-pieza");
+const btnPiezaAnt = porId<HTMLButtonElement>("btn-pieza-ant");
+const btnPiezaSig = porId<HTMLButtonElement>("btn-pieza-sig");
 const diagAR = porId("diag-ar");
 const detallesAR = document.querySelector<HTMLDetailsElement>(".diag-ar")!;
 const btnRecomprobar = porId<HTMLButtonElement>("btn-recomprobar");
 let sesionAR: XRSession | null = null;
+
+// En AR un toque sobre el modelo coloca o recoloca: no puede elegir piezas. Se eligen con ◀ ▶
+// (botones del overlay), que recorren las piezas una por una: ninguna → 1.ª → 2.ª … → ninguna.
+function recorrerPiezas(paso: number): void {
+  const def = modeloPorId(modeloActualId ?? "");
+  if (!def) return;
+  const ids: (string | null)[] = [null, ...def.piezas.map((p) => p.id)];
+  const i = ids.indexOf(piezaActual);
+  const siguiente = ids[(i + paso + ids.length) % ids.length];
+  visor.seleccionar(siguiente);
+  sincronizarPieza(siguiente);
+}
+btnPiezaAnt.addEventListener("click", () => recorrerPiezas(-1));
+btnPiezaSig.addEventListener("click", () => recorrerPiezas(1));
+
+function pintarPiezaAR(): void {
+  const def = modeloPorId(modeloActualId ?? "");
+  const pieza = def?.piezas.find((p) => p.id === piezaActual);
+  const extra = pieza ? fichaActual?.piezas[pieza.id] : null;
+  const texto = pieza ? `${pieza.nombre}: ${extra ? extra.responsabilidad : pieza.resumen}` : `${def?.nombre ?? "Modelo"}. Usa ◀ ▶ para recorrer sus piezas.`;
+  if (xrPieza.textContent !== texto) xrPieza.textContent = texto;
+}
 
 // ¿Se puede? El botón solo se habilita si la respuesta es «disponible». Se pregunta al cargar, al pulsar
 // «Comprobar de nuevo» y cuando el navegador avisa que cambió el dispositivo XR (p. ej. al activar el emulador).
 async function comprobarAR(): Promise<void> {
   const { estado, lineas } = await diagnosticarAR();
   estadoAR.textContent = mensajeSoporteAR(estado);
-  diagAR.textContent = lineas.join("\n");
+  diagAR.textContent = [...lineas, sesionAR ? "Sesión de AR en curso." : describirRastro()].join("\n");
   if (!sesionAR) btnAR.disabled = estado !== "disponible";
-  // Si no se puede, el diagnóstico se muestra abierto para ver qué comprobación falló.
-  detallesAR.open = estado !== "disponible";
+  // Si no se puede (o la última sesión se interrumpió), el diagnóstico se muestra abierto.
+  const rastro = leerRastro();
+  detallesAR.open = estado !== "disponible" || (!sesionAR && rastro !== null && rastro.paso !== PASO_FINAL);
 }
 void comprobarAR();
 btnRecomprobar.addEventListener("click", () => void comprobarAR());
 navigator.xr?.addEventListener("devicechange", () => void comprobarAR());
 
+// Texto de ayuda sobre la cámara según en qué punto va la colocación.
+function ayudaAR(e: EstadoAR): string {
+  if (!e.hitTest) return "Este dispositivo no ofrece hit-test: el modelo está a 1,5 m delante. Toca para traerlo delante de ti.";
+  switch (e.fase) {
+    case "buscando":
+      return e.sinSuperficie
+        ? "No encuentro superficies. Prueba con una zona con textura y buena luz, o toca la pantalla para colocar el modelo delante de ti."
+        : "Mueve el teléfono despacio hasta ver el anillo verde sobre una superficie.";
+    case "listo":
+      return "Toca la pantalla para colocar el modelo.";
+    case "colocado":
+      return e.overlay
+        ? "Arrastra para moverlo, gira con dos dedos, pellizca para el tamaño. Toca otro punto para recolocarlo."
+        : "Modelo colocado. Toca otro punto para recolocarlo.";
+  }
+}
+
+// Cada cambio del texto del overlay obliga al navegador a volver a dibujarlo encima de la cámara, y eso
+// cuesta. Por eso: (1) solo se escribe si el texto cambió y (2) como máximo cada 200 ms.
+const INTERVALO_OVERLAY_MS = 200;
+let ultimoPintado = 0;
+let pendienteAR: EstadoAR | null = null;
+let temporizadorAR = 0;
+
+function pintarEstadoAR(e: EstadoAR): void {
+  const si = (v: boolean) => (v ? "sí" : "no");
+  const { x, y, z } = e.posicion;
+  const pos = e.fase === "colocado" ? `(${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) m` : "—";
+  const ayuda = ayudaAR(e);
+  const datos =
+    `hit-test: ${si(e.hitTest)} · anclas: ${si(e.anclas)} · anclado: ${si(e.anclado)} · ` +
+    `fase: ${e.fase} · escala: ${e.escala.toFixed(2)} · giro: ${e.giroGrados}° · pos: ${pos} · ` +
+    `consultas: ${e.consultas} · resultados: ${e.resultados} · poses: ${e.impactos}`;
+  if (xrEstado.textContent !== ayuda) xrEstado.textContent = ayuda;
+  if (xrDatos.textContent !== datos) xrDatos.textContent = datos;
+}
+
+function mostrarEstadoAR(e: EstadoAR): void {
+  if (performance.now() - ultimoPintado >= INTERVALO_OVERLAY_MS) {
+    ultimoPintado = performance.now();
+    pintarEstadoAR(e);
+    return;
+  }
+  pendienteAR = e; // se pintará el último estado cuando venza el intervalo
+  if (temporizadorAR) return;
+  temporizadorAR = window.setTimeout(() => {
+    temporizadorAR = 0;
+    ultimoPintado = performance.now();
+    if (pendienteAR) pintarEstadoAR(pendienteAR);
+    pendienteAR = null;
+  }, INTERVALO_OVERLAY_MS);
+}
+
 btnAR.addEventListener("click", async () => {
   avisarVisor("");
   // La sesión AR abre la cámara por su cuenta: la cámara de fondo (Sesión 36) y la AR no pueden convivir.
   // Los sensores (Sesión 35) también se apagan: la sesión XR ya entrega la orientación real del teléfono.
-  // Ambas llamadas son síncronas, así que no consumen el «gesto del usuario».
   apagarCamara();
   apagarSensores();
   try {
@@ -362,15 +558,21 @@ btnAR.addEventListener("click", async () => {
     const sesion = await pedirSesionAR(overlayAR);
     sesionAR = sesion;
     btnAR.disabled = true;
-    await visor.entrarEnAR(sesion, () => {
-      sesionAR = null;
-      btnAR.disabled = false;
-      estadoAR.textContent = "La sesión de realidad aumentada terminó.";
+    const estado = await visor.entrarEnAR(sesion, {
+      overlay: overlayAR,
+      alCambiar: mostrarEstadoAR,
+      alTerminar: () => {
+        sesionAR = null;
+        btnAR.disabled = false;
+        estadoAR.textContent = "La sesión de realidad aumentada terminó.";
+        void comprobarAR();
+      },
     });
-    // domOverlayState existe solo si el navegador concedió la función «dom-overlay».
-    estadoAR.textContent = sesion.domOverlayState
-      ? "Sesión de realidad aumentada activa. Usa «Salir de AR» sobre la cámara."
-      : "Sesión de realidad aumentada activa. Este navegador no mostró el botón sobre la cámara: sal con el gesto de salida del sistema.";
+    // Alguna función se pidió como opcional: aquí se ve cuáles concedió de verdad el navegador.
+    const faltan = [!estado.overlay && "dom-overlay", !estado.hitTest && "hit-test", !estado.anclas && "anchors"].filter(Boolean);
+    estadoAR.textContent = faltan.length
+      ? `Sesión de realidad aumentada activa. El navegador no concedió: ${faltan.join(", ")}.`
+      : "Sesión de realidad aumentada activa con hit-test, anclas y botones sobre la cámara.";
   } catch (err) {
     sesionAR?.end().catch(() => {});
     sesionAR = null;
@@ -379,9 +581,69 @@ btnAR.addEventListener("click", async () => {
   }
 });
 
+// Un toque sobre un botón del overlay NO debe contar como «tocar para colocar»: el navegador avisa
+// con `beforexrselect` y basta cancelarlo.
+[btnSalirAR, btnPiezaAnt, btnPiezaSig].forEach((b) => b.addEventListener("beforexrselect", (e) => e.preventDefault()));
+
 // Un único camino de salida: end() dispara el listener «end» del visor, que restaura todo.
 btnSalirAR.addEventListener("click", () => {
   void sesionAR?.end();
+});
+
+// --- Sesión 41: instalación y estado de conexión ---
+const btnInstalar = porId<HTMLButtonElement>("btn-instalar");
+const estadoInstalacionEl = porId("estado-instalacion");
+const estadoConexionEl = porId("estado-conexion");
+
+const TEXTO_INSTALACION = {
+  instalada: "✓ Estás usando Atlas 3D como app instalada.",
+  recienInstalada: "✓ Instalada. Ábrela desde su icono en la pantalla de inicio.",
+  instalable: "Puedes instalarla: se abre a pantalla completa, desde su icono, y funciona sin conexión.",
+  ios: "En iPhone y iPad no hay botón: en Safari toca Compartir y luego «Añadir a pantalla de inicio».",
+  noDisponible: "Este navegador no ofrece instalar desde la página. Si ya la instalaste, ábrela desde su icono; si no, usa el menú del navegador → «Instalar app».",
+  rechazada: "Cancelaste la instalación. Chrome decide cuándo volver a ofrecerla; mientras tanto, usa el menú ⋮ → «Instalar app».",
+};
+
+function pintarInstalacion(): void {
+  const estado = estadoInstalacion();
+  btnInstalar.hidden = estado !== "instalable";
+  estadoInstalacionEl.textContent =
+    estado === "instalada" ? TEXTO_INSTALACION.instalada
+    : estado === "recien-instalada" ? TEXTO_INSTALACION.recienInstalada
+    : estado === "instalable" ? TEXTO_INSTALACION.instalable
+    : estado === "ios" ? TEXTO_INSTALACION.ios
+    : instalacionRechazada() ? TEXTO_INSTALACION.rechazada
+    : TEXTO_INSTALACION.noDisponible;
+}
+
+btnInstalar.addEventListener("click", async () => {
+  btnInstalar.disabled = true;
+  try {
+    await pedirInstalacion(); // el resultado lo pinta pintarInstalacion() vía iniciarInstalacion
+  } finally {
+    btnInstalar.disabled = false;
+  }
+});
+iniciarInstalacion(pintarInstalacion);
+
+let estuvoSinConexion = false;
+let temporizadorConexion: number | undefined;
+iniciarConexion((enLinea) => {
+  window.clearTimeout(temporizadorConexion);
+  if (!enLinea) {
+    estuvoSinConexion = true;
+    estadoConexionEl.hidden = false;
+    estadoConexionEl.textContent = "Sin conexión: los modelos y las fichas descargadas siguen disponibles.";
+  } else if (estuvoSinConexion) {
+    estuvoSinConexion = false;
+    estadoConexionEl.hidden = false;
+    estadoConexionEl.textContent = "Volvió la conexión.";
+    temporizadorConexion = window.setTimeout(() => {
+      estadoConexionEl.hidden = true;
+    }, 3000);
+  } else {
+    estadoConexionEl.hidden = true;
+  }
 });
 
 // --- Sesión 34: registro del Service Worker con virtual:pwa-register ---
@@ -413,3 +675,6 @@ if ("serviceWorker" in navigator) {
   estadoSwEl.textContent = "Este navegador no soporta Service Workers";
   estadoSwEl.classList.add("error");
 }
+
+// Sesión 40: al arrancar se muestra el primer modelo (o el que pida ?modelo=ID desde una notificación).
+elegirModelo(modeloPorId(destacado ?? "") ? destacado! : CATALOGO[0].id);

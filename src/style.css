@@ -29,6 +29,7 @@ body {
 }
 
 #app {
+  width: 100%;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -117,7 +118,10 @@ body {
 .escena-contenedor {
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;
+  /* Sesión 42 (Lighthouse): el alto se reserva desde el principio (mismo 4:3 que usa visor.ts) para que
+     lo de abajo no «salte» cuando el canvas llega tarde. */
+  aspect-ratio: 4 / 3;
+  max-height: 560px;
   margin: 0.75rem 0;
   border-radius: 28px;
   overflow: hidden;
@@ -257,6 +261,10 @@ body {
   align-items: center;
   gap: 0.6em;
   padding-bottom: 1.2em;
+}
+
+.xr-overlay {
+  touch-action: none; /* los gestos son nuestros: que el navegador no haga scroll ni zoom */
 }
 
 .xr-overlay p {
@@ -585,4 +593,183 @@ body {
 
 .pie p {
   margin: 0;
+}
+
+/* Sesión 39-40: gestos y selector de piezas dentro de la sesión AR */
+.xr-overlay .xr-datos {
+  font: 0.72em ui-monospace, monospace;
+}
+
+.xr-overlay .xr-piezas {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  max-width: 94%;
+}
+
+.xr-overlay .xr-piezas .xr-pieza {
+  flex: 1;
+  font-size: 0.82em;
+  max-height: 6.5em;
+  overflow: hidden;
+}
+
+.xr-overlay .xr-piezas button {
+  padding: 0.6em 0.9em;
+}
+
+/* Sesión 40: panel del modelo */
+.contenido {
+  width: 100%;
+}
+
+.modelo-panel {
+  margin: 0.8rem 0;
+  /* Sesión 42: se llena con JavaScript; se reserva su alto para no mover lo de abajo. */
+  min-height: 25em;
+}
+
+.modelo-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.modelo-tabs .tab {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--purple-6);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  padding: 0.4rem 0.85rem;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.modelo-tabs .tab[aria-pressed="true"] {
+  background: var(--green-1);
+  color: var(--blue-1);
+  border-color: var(--green-1);
+  font-weight: 800;
+}
+
+.modelo-resumen {
+  margin: 0.7rem 0 0.4rem;
+  color: var(--purple-4);
+  font-size: 0.92rem;
+}
+
+.leyenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--blue-2);
+  margin-bottom: 0.6rem;
+}
+
+.leyenda-item i,
+.chip-pieza i,
+.pieza-detalle h3 i {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  margin-right: 0.4em;
+  vertical-align: -0.05em;
+}
+
+.chips-piezas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chip-pieza {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--purple-6);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 0.35rem 0.65rem;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.chip-pieza[aria-pressed="true"] {
+  border-color: var(--green-1);
+  box-shadow: 0 0 0 1px var(--green-1) inset;
+  background: rgba(104, 238, 180, 0.1);
+}
+
+.pieza-detalle {
+  margin-top: 0.7rem;
+  padding: 0.8rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  min-height: 4.5em;
+}
+
+.pieza-detalle h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+.pieza-detalle h3 small {
+  color: var(--blue-2);
+  font-weight: 400;
+  margin-left: 0.4em;
+}
+
+.pieza-detalle p {
+  margin: 0.3rem 0;
+}
+
+.nota-ficha {
+  color: #ffd58a;
+  font-size: 0.85rem;
+}
+
+.patron-card .resumen-card {
+  color: var(--purple-4);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.btn-ver3d {
+  margin-top: 0.4rem;
+  background: rgba(104, 238, 180, 0.12);
+  color: var(--green-1);
+  border: 1px solid rgba(104, 238, 180, 0.4);
+  border-radius: 9999px;
+  padding: 0.35rem 0.8rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-ver3d:hover {
+  background: rgba(104, 238, 180, 0.22);
+}
+
+/* Sesión 41: instalación y estado de conexión */
+.estado-conexion {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  background: #5b3a12;
+  color: #ffe9c2;
+  border-bottom: 1px solid #a8741f;
+}
+
+.instalar-zona {
+  margin-bottom: 1rem;
 }
